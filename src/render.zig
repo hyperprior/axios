@@ -12,6 +12,7 @@ const JournalState = journal_mod.JournalState;
 const TimeOfDay = @import("time_of_day.zig").TimeOfDay;
 const VigilState = @import("vigil.zig").VigilState;
 const ambient_mod = @import("ambient.zig");
+const Textures = @import("textures.zig").Textures;
 
 const screen_width: c_int = @intFromFloat(gs_mod.screen_width);
 const screen_height: c_int = @intFromFloat(gs_mod.screen_height);
@@ -43,16 +44,18 @@ const dialogue_border = c.Color{ .r = 160, .g = 130, .b = 80, .a = 255 };
 const choice_selected = c.Color{ .r = 212, .g = 175, .b = 55, .a = 255 };
 const choice_normal = c.Color{ .r = 160, .g = 150, .b = 135, .a = 255 };
 
-const Zone = struct { x: f32, y: f32, w: f32, h: f32, color: c.Color, label: [*:0]const u8 };
+const TileType = enum { church, market, house, water };
+
+const Zone = struct { x: f32, y: f32, w: f32, h: f32, tile: TileType, label: [*:0]const u8 };
 const Path = struct { x: f32, y: f32, w: f32, h: f32 };
 
 const zones = [_]Zone{
-    .{ .x = 900, .y = 600, .w = 400, .h = 350, .color = church_color, .label = "Church of the Holy Wisdom" },
-    .{ .x = 200, .y = 500, .w = 600, .h = 120, .color = market_color, .label = "Market Street" },
-    .{ .x = 700, .y = 200, .w = 180, .h = 350, .color = house_color, .label = "Residential Lane" },
-    .{ .x = 1050, .y = 250, .w = 200, .h = 160, .color = house_color, .label = "Helena's House" },
-    .{ .x = 100, .y = 1400, .w = 2200, .h = 300, .color = water_color, .label = "Harbor" },
-    .{ .x = 1500, .y = 1100, .w = 350, .h = 250, .color = market_color, .label = "Loading Court" },
+    .{ .x = 900, .y = 600, .w = 400, .h = 350, .tile = .church, .label = "Church of the Holy Wisdom" },
+    .{ .x = 200, .y = 500, .w = 600, .h = 120, .tile = .market, .label = "Market Street" },
+    .{ .x = 700, .y = 200, .w = 180, .h = 350, .tile = .house, .label = "Residential Lane" },
+    .{ .x = 1050, .y = 250, .w = 200, .h = 160, .tile = .house, .label = "Helena's House" },
+    .{ .x = 100, .y = 1400, .w = 2200, .h = 300, .tile = .water, .label = "Harbor" },
+    .{ .x = 1500, .y = 1100, .w = 350, .h = 250, .tile = .market, .label = "Loading Court" },
 };
 
 const paths = [_]Path{
@@ -67,13 +70,13 @@ fn i(f: f32) c_int {
     return @intFromFloat(f);
 }
 
-pub fn drawFrame(gs: *const GameState, has_save: bool) void {
+pub fn drawFrame(gs: *const GameState, has_save: bool, tex: *const Textures) void {
     c.ClearBackground(bg);
     switch (gs.scene) {
         .title => drawTitle(has_save),
-        .gameplay => drawGameplay(gs),
+        .gameplay => drawGameplay(gs, tex),
         .paused => {
-            drawGameplay(gs);
+            drawGameplay(gs, tex);
             drawPause();
         },
         .vigil => drawVigil(&gs.vigil),
@@ -103,21 +106,66 @@ fn drawTitle(has_save: bool) void {
     }
 }
 
-fn drawGameplay(gs: *const GameState) void {
+fn drawGameplay(gs: *const GameState, tex: *const Textures) void {
     const cx = gs.camera_x;
     const cy = gs.camera_y;
 
-    // Ground
-    c.DrawRectangle(i(-cx), i(-cy), world_w, world_h, ground);
+    const ts: c_int = 32; // tile size
+    const tsf: f32 = 32.0;
 
-    // Paths
-    for (paths) |p| {
-        c.DrawRectangle(i(p.x - cx), i(p.y - cy), i(p.w), i(p.h), path_color);
+    // Tiled ground
+    const start_tx = @as(c_int, @intFromFloat(cx / tsf));
+    const start_ty = @as(c_int, @intFromFloat(cy / tsf));
+    const end_tx = start_tx + @divTrunc(screen_width, ts) + 2;
+    const end_ty = start_ty + @divTrunc(screen_height, ts) + 2;
+
+    var ty = start_ty;
+    while (ty < end_ty) : (ty += 1) {
+        var tx = start_tx;
+        while (tx < end_tx) : (tx += 1) {
+            const px_x = tx * ts - i(cx);
+            const px_y = ty * ts - i(cy);
+            if (tx >= 0 and ty >= 0 and tx < @divTrunc(world_w, ts) and ty < @divTrunc(world_h, ts)) {
+                c.DrawTexture(tex.ground, px_x, px_y, c.WHITE);
+            }
+        }
     }
 
-    // Zones
+    // Tiled paths
+    for (paths) |p| {
+        const ptx_start = @as(c_int, @intFromFloat(p.x / tsf));
+        const pty_start = @as(c_int, @intFromFloat(p.y / tsf));
+        const ptx_end = @as(c_int, @intFromFloat((p.x + p.w) / tsf)) + 1;
+        const pty_end = @as(c_int, @intFromFloat((p.y + p.h) / tsf)) + 1;
+        var pty = pty_start;
+        while (pty < pty_end) : (pty += 1) {
+            var ptx = ptx_start;
+            while (ptx < ptx_end) : (ptx += 1) {
+                c.DrawTexture(tex.path, ptx * ts - i(cx), pty * ts - i(cy), c.WHITE);
+            }
+        }
+    }
+
+    // Tiled zones
     for (zones) |z| {
-        c.DrawRectangle(i(z.x - cx), i(z.y - cy), i(z.w), i(z.h), z.color);
+        const ztile = switch (z.tile) {
+            .church => tex.church,
+            .market => tex.market,
+            .house => tex.house,
+            .water => tex.water,
+        };
+        const ztx_start = @as(c_int, @intFromFloat(z.x / tsf));
+        const zty_start = @as(c_int, @intFromFloat(z.y / tsf));
+        const ztx_end = @as(c_int, @intFromFloat((z.x + z.w) / tsf)) + 1;
+        const zty_end = @as(c_int, @intFromFloat((z.y + z.h) / tsf)) + 1;
+        var zty = zty_start;
+        while (zty < zty_end) : (zty += 1) {
+            var ztx = ztx_start;
+            while (ztx < ztx_end) : (ztx += 1) {
+                c.DrawTexture(ztile, ztx * ts - i(cx), zty * ts - i(cy), c.WHITE);
+            }
+        }
+        // Zone border
         c.DrawRectangleLines(i(z.x - cx), i(z.y - cy), i(z.w), i(z.h), stone_wall);
         c.DrawText(z.label, i(z.x - cx + 10), i(z.y - cy + 10), 16, label_color);
     }
@@ -126,18 +174,18 @@ fn drawGameplay(gs: *const GameState) void {
     for (npc_mod.district_npcs, 0..) |npc, idx| {
         if (!npc.isVisible(&gs.flags)) continue;
         const is_nearby = gs.nearby_npc != null and gs.nearby_npc.? == idx;
-        drawNpc(&npc, cx, cy, is_nearby);
+        drawNpcSprite(&npc, cx, cy, is_nearby, tex);
     }
 
     // Ambient NPCs
     for (ambient_mod.district_ambient, 0..) |anpc, idx| {
         if (!anpc.isVisible(&gs.flags, gs.time)) continue;
         const is_nearby = gs.nearby_ambient != null and gs.nearby_ambient.? == idx;
-        drawAmbientNpc(&anpc, cx, cy, is_nearby);
+        drawAmbientNpcSprite(&anpc, cx, cy, is_nearby, tex);
     }
 
-    // Player
-    drawPlayer(&gs.player, cx, cy);
+    // Player sprite
+    drawPlayerSprite(&gs.player, cx, cy, tex);
 
     // Ambient speech bubble
     if (gs.ambient_talk_timer > 0) {
@@ -194,21 +242,20 @@ fn drawGameplay(gs: *const GameState) void {
     }
 }
 
-const ambient_color = c.Color{ .r = 110, .g = 105, .b = 95, .a = 255 };
-const ambient_highlight_color = c.Color{ .r = 160, .g = 150, .b = 130, .a = 255 };
+fn drawAmbientNpcSprite(anpc: *const ambient_mod.AmbientNpc, cx: f32, cy: f32, highlight: bool, tex: *const Textures) void {
+    const sprite = tex.ambientTexture(anpc.name);
+    const sprite_w: c_int = sprite.width;
+    const sprite_h: c_int = sprite.height;
+    const sx = i(anpc.x - cx) - @divTrunc(sprite_w, 2);
+    const sy = i(anpc.y - cy) - sprite_h;
 
-fn drawAmbientNpc(anpc: *const ambient_mod.AmbientNpc, cx: f32, cy: f32, highlight: bool) void {
-    const size: c_int = i(anpc.size);
-    const sx = i(anpc.x - anpc.size / 2 - cx);
-    const sy = i(anpc.y - anpc.size / 2 - cy);
-
-    const color = if (highlight) ambient_highlight_color else ambient_color;
-    c.DrawRectangle(sx, sy, size, size, color);
+    const tint_color = if (highlight) c.WHITE else c.Color{ .r = 180, .g = 175, .b = 170, .a = 255 };
+    c.DrawTexture(sprite, sx, sy, tint_color);
 
     if (highlight) {
         const name_cstr = @as([*:0]const u8, @ptrCast(anpc.name.ptr));
         const name_width = c.MeasureText(name_cstr, 12);
-        c.DrawText(name_cstr, sx + @divTrunc(size - name_width, 2), sy - 16, 12, label_color);
+        c.DrawText(name_cstr, sx + @divTrunc(sprite_w - name_width, 2), sy - 16, 12, label_color);
     }
 }
 
@@ -230,20 +277,24 @@ fn drawAmbientSpeech(anpc: *const ambient_mod.AmbientNpc, cx: f32, cy: f32) void
     c.DrawText(line_cstr, bx + 6, sy + 18, 14, warm_stone);
 }
 
-fn drawNpc(npc: *const npc_mod.Npc, cx: f32, cy: f32, highlight: bool) void {
-    const size: c_int = i(npc.size);
-    const sx = i(npc.x - npc.size / 2 - cx);
-    const sy = i(npc.y - npc.size / 2 - cy);
+fn drawNpcSprite(npc: *const npc_mod.Npc, cx: f32, cy: f32, highlight: bool, tex: *const Textures) void {
+    const sprite = tex.npcTexture(npc.name);
+    const sprite_w: c_int = sprite.width;
+    const sprite_h: c_int = sprite.height;
+    const sx = i(npc.x - cx) - @divTrunc(sprite_w, 2);
+    const sy = i(npc.y - cy) - sprite_h;
 
-    // Body
-    const color = if (highlight) npc_highlight else npc_color;
-    c.DrawRectangle(sx, sy, size, size, color);
-    c.DrawRectangleLines(sx, sy, size, size, stone_wall);
+    c.DrawTexture(sprite, sx, sy, c.WHITE);
+
+    // Highlight ring when nearby
+    if (highlight) {
+        c.DrawRectangleLines(sx - 2, sy - 2, sprite_w + 4, sprite_h + 4, gold);
+    }
 
     // Name above head
     const name_cstr = @as([*:0]const u8, @ptrCast(npc.name.ptr));
     const name_width = c.MeasureText(name_cstr, 14);
-    c.DrawText(name_cstr, sx + @divTrunc(size - name_width, 2), sy - 18, 14, if (highlight) gold else label_color);
+    c.DrawText(name_cstr, sx + @divTrunc(sprite_w - name_width, 2), sy - 18, 14, if (highlight) gold else label_color);
 }
 
 fn drawInteractPrompt(name: []const u8) void {
@@ -561,22 +612,14 @@ fn drawVigil(vigil: *const VigilState) void {
     c.DrawText(prompt, @divTrunc(screen_width - pw, 2), screen_height - 60, 16, muted);
 }
 
-fn drawPlayer(p: *const player_mod.Player, cx: f32, cy: f32) void {
-    const size: c_int = @intFromFloat(player_mod.player_size);
-    const sx = i(p.x - cx);
-    const sy = i(p.y - cy);
+fn drawPlayerSprite(p: *const player_mod.Player, cx: f32, cy: f32, tex: *const Textures) void {
+    const sprite = tex.player;
+    const sprite_w: c_int = sprite.width;
+    const sprite_h: c_int = sprite.height;
+    const sx = i(p.x - cx) - @divTrunc(sprite_w, 2) + @divTrunc(@as(c_int, @intFromFloat(player_mod.player_size)), 2);
+    const sy = i(p.y - cy) - sprite_h + @as(c_int, @intFromFloat(player_mod.player_size));
 
-    c.DrawRectangle(sx, sy, size, size, player_body);
-
-    const pcx = sx + @divTrunc(size, 2);
-    const pcy = sy + @divTrunc(size, 2);
-    const ind: c_int = 4;
-    switch (p.facing) {
-        .north => c.DrawRectangle(pcx - @divTrunc(ind, 2), sy, ind, ind, player_indicator),
-        .south => c.DrawRectangle(pcx - @divTrunc(ind, 2), sy + size - ind, ind, ind, player_indicator),
-        .west => c.DrawRectangle(sx, pcy - @divTrunc(ind, 2), ind, ind, player_indicator),
-        .east => c.DrawRectangle(sx + size - ind, pcy - @divTrunc(ind, 2), ind, ind, player_indicator),
-    }
+    c.DrawTexture(sprite, sx, sy, c.WHITE);
 }
 
 fn drawPause() void {

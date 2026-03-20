@@ -5,11 +5,13 @@ const GameState = @import("game_state.zig").GameState;
 const Input = @import("player.zig").Input;
 const render = @import("render.zig");
 const save_mod = @import("save.zig");
+const Textures = @import("textures.zig").Textures;
 
 const game_title = "Axios \xe2\x80\x94 Constantinople, 4th Century";
 
 var gs: GameState = GameState.init();
 var steam: Steam = undefined;
+var textures: Textures = .{};
 var save_msg_timer: f32 = 0;
 var save_msg: [*:0]const u8 = "";
 
@@ -23,6 +25,9 @@ pub fn main() void {
     c.SetTargetFPS(60);
     c.SetExitKey(0);
 
+    textures.load();
+    defer textures.unload();
+
     while (!c.WindowShouldClose()) {
         steam.runCallbacks();
 
@@ -33,7 +38,7 @@ pub fn main() void {
 
         c.BeginDrawing();
         defer c.EndDrawing();
-        render.drawFrame(&gs, save_mod.hasSave());
+        render.drawFrame(&gs, save_mod.hasSave(), &textures);
 
         // Save notification overlay
         if (save_msg_timer > 0) {
