@@ -113,7 +113,7 @@ fn drawGameplay(gs: *const GameState) void {
     // HUD
     c.DrawRectangle(0, 0, screen_width, 36, hud_bg);
     c.DrawText("The Portico Quarter", 12, 8, 20, hud_color);
-    c.DrawText("WASD: Move  ESC: Pause  Shift+S: Save", screen_width - 340, 10, 16, label_color);
+    c.DrawText("WASD: Move  ESC: Pause  F5: Save", screen_width - 340, 10, 16, label_color);
 }
 
 fn drawPlayer(p: *const player_mod.Player, cx: f32, cy: f32) void {
