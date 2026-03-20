@@ -1,6 +1,8 @@
 // Pure dialogue data and state machine. No raylib dependency.
 
 const std = @import("std");
+const Flag = @import("flags.zig").Flag;
+const Flags = @import("flags.zig").Flags;
 
 pub const Choice = struct {
     text: []const u8,
@@ -17,6 +19,7 @@ pub const Node = struct {
 pub const Dialogue = struct {
     id: []const u8,
     nodes: []const Node,
+    grants: Flag = .none, // flag granted when this dialogue completes
 };
 
 pub const DialogueState = struct {
@@ -61,35 +64,35 @@ pub const DialogueState = struct {
         }
     }
 
-    // Advance dialogue: pick choice or go to next node. Returns true if dialogue ended.
-    pub fn advance(self: *DialogueState) bool {
+    // Advance dialogue. Returns the granted flag if dialogue ended, .none otherwise.
+    pub fn advance(self: *DialogueState) Flag {
         const node = self.currentNode() orelse {
-            self.close();
-            return true;
+            return self.closeAndGrant();
         };
 
         if (node.choices.len > 0) {
-            // Player picked a choice
             const choice = &node.choices[self.selected_choice];
             self.current_node = choice.next_node;
         } else if (node.next_node) |next| {
             self.current_node = next;
         } else {
-            // End of dialogue
-            self.close();
-            return true;
+            return self.closeAndGrant();
         }
 
         self.selected_choice = 0;
 
-        // Check if new node is valid
-        const d = self.dialogue orelse return true;
+        const d = self.dialogue orelse return self.closeAndGrant();
         if (self.current_node >= d.nodes.len) {
-            self.close();
-            return true;
+            return self.closeAndGrant();
         }
 
-        return false;
+        return .none;
+    }
+
+    fn closeAndGrant(self: *DialogueState) Flag {
+        const flag = if (self.dialogue) |d| d.grants else .none;
+        self.close();
+        return flag;
     }
 
     pub fn close(self: *DialogueState) void {
@@ -107,6 +110,7 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 
 const test_dialogue = Dialogue{
     .id = "test",
+    .grants = .spoke_to_theophilos,
     .nodes = &.{
         .{
             .speaker = "Anna",
@@ -152,18 +156,18 @@ test "dialogue has choices" {
 test "selecting choice advances to correct node" {
     var ds = DialogueState{};
     ds.start(&test_dialogue);
-    ds.selected_choice = 0; // "Yes, Father Theophilos sent me."
-    const ended = ds.advance();
-    try expect(!ended);
+    ds.selected_choice = 0;
+    const flag = ds.advance();
+    try expect(flag == .none);
     try expect(ds.current_node == 1);
 }
 
 test "second choice goes to different node" {
     var ds = DialogueState{};
     ds.start(&test_dialogue);
-    ds.selected_choice = 1; // "Who are you?"
-    const ended = ds.advance();
-    try expect(!ended);
+    ds.selected_choice = 1;
+    const flag = ds.advance();
+    try expect(flag == .none);
     try expect(ds.current_node == 2);
 }
 
@@ -172,19 +176,19 @@ test "auto-advance follows next_node" {
     ds.start(&test_dialogue);
     ds.selected_choice = 0;
     _ = ds.advance(); // node 0 -> 1
-    const ended = ds.advance(); // node 1 -> 3 (auto)
-    try expect(!ended);
+    const flag = ds.advance(); // node 1 -> 3 (auto)
+    try expect(flag == .none);
     try expect(ds.current_node == 3);
 }
 
-test "dialogue ends at terminal node" {
+test "dialogue ends at terminal node and grants flag" {
     var ds = DialogueState{};
     ds.start(&test_dialogue);
     ds.selected_choice = 0;
     _ = ds.advance(); // 0 -> 1
     _ = ds.advance(); // 1 -> 3
-    const ended = ds.advance(); // 3 is terminal
-    try expect(ended);
+    const flag = ds.advance(); // 3 is terminal
+    try expect(flag == .spoke_to_theophilos);
     try expect(!ds.active);
 }
 
@@ -194,11 +198,11 @@ test "select up and down" {
     try expect(ds.selected_choice == 0);
     ds.selectDown();
     try expect(ds.selected_choice == 1);
-    ds.selectDown(); // already at max
+    ds.selectDown();
     try expect(ds.selected_choice == 1);
     ds.selectUp();
     try expect(ds.selected_choice == 0);
-    ds.selectUp(); // already at 0
+    ds.selectUp();
     try expect(ds.selected_choice == 0);
 }
 

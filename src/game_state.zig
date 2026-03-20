@@ -6,8 +6,9 @@ const Bounds = @import("player.zig").Bounds;
 const Input = @import("player.zig").Input;
 const clamp = @import("player.zig").clamp;
 const DialogueState = @import("dialogue.zig").DialogueState;
+const Flag = @import("flags.zig").Flag;
+const Flags = @import("flags.zig").Flags;
 const npc_mod = @import("npc.zig");
-const Npc = npc_mod.Npc;
 
 pub const screen_width: f32 = 1280;
 pub const screen_height: f32 = 720;
@@ -33,7 +34,8 @@ pub const GameState = struct {
     camera_x: f32 = 0,
     camera_y: f32 = 0,
     dialogue: DialogueState = .{},
-    nearby_npc: ?usize = null, // index into district_npcs
+    nearby_npc: ?usize = null,
+    flags: Flags = .{},
 
     pub fn init() GameState {
         return .{};
@@ -46,6 +48,7 @@ pub const GameState = struct {
         self.camera_y = 0;
         self.dialogue = .{};
         self.nearby_npc = null;
+        self.flags = .{};
     }
 
     pub fn inDialogue(self: *const GameState) bool {
@@ -59,24 +62,27 @@ pub const GameState = struct {
         }
     }
 
+    pub fn advanceDialogue(self: *GameState) void {
+        const flag = self.dialogue.advance();
+        if (flag != .none) {
+            self.flags.grant(flag);
+        }
+    }
+
     pub fn updateGameplay(self: *GameState, input: Input, dt: f32) void {
-        // Don't move during dialogue
         if (!self.dialogue.active) {
             self.player.update(input, dt, world_bounds);
         }
 
-        // Check for nearby NPCs
         self.nearby_npc = npc_mod.findInteractable(
             &npc_mod.district_npcs,
             self.player.centerX(),
             self.player.centerY(),
+            &self.flags,
         );
 
-        // Camera follows player, centered
         self.camera_x = self.player.centerX() - screen_width / 2.0;
         self.camera_y = self.player.centerY() - screen_height / 2.0;
-
-        // Clamp camera to world
         self.camera_x = clamp(self.camera_x, 0, world_w - screen_width);
         self.camera_y = clamp(self.camera_y, 0, world_h - screen_height);
     }
@@ -106,7 +112,8 @@ pub const GameState = struct {
         player_facing: u8,
         camera_x: f32,
         camera_y: f32,
-        version: u32 = 1,
+        flags: [32]bool = [_]bool{false} ** 32,
+        version: u32 = 2,
     };
 
     pub fn toSaveData(self: *const GameState) SaveData {
@@ -116,6 +123,7 @@ pub const GameState = struct {
             .player_facing = @intFromEnum(self.player.facing),
             .camera_x = self.camera_x,
             .camera_y = self.camera_y,
+            .flags = self.flags.set,
         };
     }
 
@@ -129,6 +137,7 @@ pub const GameState = struct {
             },
             .camera_x = data.camera_x,
             .camera_y = data.camera_y,
+            .flags = .{ .set = data.flags },
         };
     }
 };
@@ -192,13 +201,13 @@ test "camera follows player" {
     var gs = GameState.init();
     gs.startGame();
     gs.updateGameplay(.{ .right = true }, 0.5);
-    // Camera should be offset from player center
     try expectApprox(gs.camera_x, gs.player.centerX() - screen_width / 2.0, 1.0);
 }
 
-test "save/load roundtrip preserves state" {
+test "save/load roundtrip preserves state and flags" {
     var gs = GameState.init();
     gs.startGame();
+    gs.flags.grant(.spoke_to_theophilos);
     gs.updateGameplay(.{ .right = true, .down = true }, 1.0);
 
     const save = gs.toSaveData();
@@ -208,10 +217,40 @@ test "save/load roundtrip preserves state" {
     try expectApprox(loaded.player.y, gs.player.y, 0.01);
     try expect(loaded.player.facing == gs.player.facing);
     try expect(loaded.scene == .gameplay);
+    try expect(loaded.flags.has(.spoke_to_theophilos));
+    try expect(!loaded.flags.has(.spoke_to_anna));
 }
 
-test "save data version is set" {
-    const gs = GameState.init();
-    const save = gs.toSaveData();
-    try expect(save.version == 1);
+test "dialogue completion grants flag" {
+    var gs = GameState.init();
+    gs.startGame();
+    gs.dialogue.start(&npc_mod.theophilos_dialogue);
+    try expect(!gs.flags.has(.spoke_to_theophilos));
+
+    // Pick first choice, then advance to end
+    gs.dialogue.selected_choice = 0;
+    gs.advanceDialogue(); // node 0 -> 1
+    gs.advanceDialogue(); // node 1 is terminal -> grants flag
+
+    try expect(gs.flags.has(.spoke_to_theophilos));
+    try expect(!gs.dialogue.active);
+}
+
+test "only theophilos visible at start" {
+    var gs = GameState.init();
+    gs.startGame();
+    // Near Theophilos
+    gs.player = Player.init(1050, 700);
+    gs.updateGameplay(.{}, 0);
+    try expect(gs.nearby_npc != null);
+
+    // Near Anna's position but she's hidden
+    gs.player = Player.init(1150, 850);
+    gs.updateGameplay(.{}, 0);
+    try expect(gs.nearby_npc == null);
+
+    // After speaking to Theophilos, Anna appears
+    gs.flags.grant(.spoke_to_theophilos);
+    gs.updateGameplay(.{}, 0);
+    try expect(gs.nearby_npc != null);
 }

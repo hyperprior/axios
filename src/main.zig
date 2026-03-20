@@ -64,7 +64,7 @@ fn update(dt: f32) void {
                     gs.dialogue.selectDown();
                 }
                 if (c.IsKeyPressed(c.KEY_ENTER) or c.IsKeyPressed(c.KEY_SPACE) or c.IsKeyPressed(c.KEY_E)) {
-                    _ = gs.dialogue.advance();
+                    gs.advanceDialogue();
                 }
                 if (c.IsKeyPressed(c.KEY_ESCAPE)) {
                     gs.dialogue.close();

@@ -6,6 +6,7 @@ const gs_mod = @import("game_state.zig");
 const player_mod = @import("player.zig");
 const npc_mod = @import("npc.zig");
 const DialogueState = @import("dialogue.zig").DialogueState;
+const Flags = @import("flags.zig").Flags;
 
 const screen_width: c_int = @intFromFloat(gs_mod.screen_width);
 const screen_height: c_int = @intFromFloat(gs_mod.screen_height);
@@ -115,8 +116,9 @@ fn drawGameplay(gs: *const GameState) void {
         c.DrawText(z.label, i(z.x - cx + 10), i(z.y - cy + 10), 16, label_color);
     }
 
-    // NPCs
+    // NPCs (only draw visible ones)
     for (npc_mod.district_npcs, 0..) |npc, idx| {
+        if (!npc.isVisible(&gs.flags)) continue;
         const is_nearby = gs.nearby_npc != null and gs.nearby_npc.? == idx;
         drawNpc(&npc, cx, cy, is_nearby);
     }

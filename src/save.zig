@@ -41,6 +41,9 @@ pub fn save(gs: *const GameState) SaveError!void {
 
     const facing = [_]u8{data.player_facing};
     if (c_io.fwrite(&facing, 1, 1, file) != 1) return error.WriteFailed;
+
+    // Write flags
+    if (c_io.fwrite(&data.flags, @sizeOf(@TypeOf(data.flags)), 1, file) != 1) return error.WriteFailed;
 }
 
 pub fn load() LoadError!GameState {
@@ -57,6 +60,12 @@ pub fn load() LoadError!GameState {
     var facing: [1]u8 = undefined;
     if (c_io.fread(&facing, 1, 1, file) != 1) return error.ReadFailed;
 
+    var flags_data: [32]bool = [_]bool{false} ** 32;
+    if (header[1] >= 2) {
+        // Version 2+ includes flags
+        if (c_io.fread(&flags_data, @sizeOf(@TypeOf(flags_data)), 1, file) != 1) return error.ReadFailed;
+    }
+
     return GameState.fromSaveData(.{
         .version = header[1],
         .player_x = floats[0],
@@ -64,6 +73,7 @@ pub fn load() LoadError!GameState {
         .camera_x = floats[2],
         .camera_y = floats[3],
         .player_facing = facing[0],
+        .flags = flags_data,
     });
 }
 

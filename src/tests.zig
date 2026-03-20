@@ -5,4 +5,5 @@ test {
     _ = @import("save.zig");
     _ = @import("dialogue.zig");
     _ = @import("npc.zig");
+    _ = @import("flags.zig");
 }

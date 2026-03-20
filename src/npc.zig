@@ -2,6 +2,8 @@
 
 const std = @import("std");
 const Dialogue = @import("dialogue.zig").Dialogue;
+const Flag = @import("flags.zig").Flag;
+const Flags = @import("flags.zig").Flags;
 
 const interaction_radius: f32 = 50.0;
 
@@ -11,6 +13,11 @@ pub const Npc = struct {
     y: f32,
     dialogue: *const Dialogue,
     size: f32 = 20,
+    requires: Flag = .none, // NPC only appears when this flag is set (.none = always visible)
+
+    pub fn isVisible(self: *const Npc, flags: *const Flags) bool {
+        return self.requires == .none or flags.has(self.requires);
+    }
 
     pub fn distanceTo(self: *const Npc, px: f32, py: f32) f32 {
         const dx = self.x - px;
@@ -23,11 +30,12 @@ pub const Npc = struct {
     }
 };
 
-pub fn findInteractable(npcs: []const Npc, px: f32, py: f32) ?usize {
+pub fn findInteractable(npcs: []const Npc, px: f32, py: f32, flags: *const Flags) ?usize {
     var closest_dist: f32 = interaction_radius;
     var closest_idx: ?usize = null;
 
     for (npcs, 0..) |*npc, i| {
+        if (!npc.isVisible(flags)) continue;
         const dist = npc.distanceTo(px, py);
         if (dist < closest_dist) {
             closest_dist = dist;
@@ -42,6 +50,7 @@ pub fn findInteractable(npcs: []const Npc, px: f32, py: f32) ?usize {
 
 pub const theophilos_dialogue = Dialogue{
     .id = "theophilos_intro",
+    .grants = .spoke_to_theophilos,
     .nodes = &.{
         .{
             .speaker = "Father Theophilos",
@@ -69,6 +78,7 @@ pub const theophilos_dialogue = Dialogue{
 
 pub const anna_dialogue = Dialogue{
     .id = "anna_intro",
+    .grants = .spoke_to_anna,
     .nodes = &.{
         .{
             .speaker = "Anna",
@@ -104,6 +114,7 @@ pub const anna_dialogue = Dialogue{
 
 pub const markos_dialogue = Dialogue{
     .id = "markos_intro",
+    .grants = .spoke_to_markos,
     .nodes = &.{
         .{
             .speaker = "Markos",
@@ -134,6 +145,7 @@ pub const markos_dialogue = Dialogue{
 
 pub const helena_dialogue = Dialogue{
     .id = "helena_intro",
+    .grants = .spoke_to_helena,
     .nodes = &.{
         .{
             .speaker = "Helena",
@@ -157,6 +169,7 @@ pub const helena_dialogue = Dialogue{
 
 pub const stephanos_dialogue = Dialogue{
     .id = "stephanos_intro",
+    .grants = .spoke_to_stephanos,
     .nodes = &.{
         .{
             .speaker = "Stephanos",
@@ -179,6 +192,7 @@ pub const stephanos_dialogue = Dialogue{
 
 pub const diodoros_dialogue = Dialogue{
     .id = "diodoros_intro",
+    .grants = .spoke_to_diodoros,
     .nodes = &.{
         .{
             .speaker = "Diodoros",
@@ -200,13 +214,14 @@ pub const diodoros_dialogue = Dialogue{
 };
 
 // NPC placements in the Portico Quarter
+// requires = .none means always visible; otherwise the flag must be set
 pub const district_npcs = [_]Npc{
-    .{ .name = "Father Theophilos", .x = 1050, .y = 700, .dialogue = &theophilos_dialogue },
-    .{ .name = "Anna", .x = 1150, .y = 850, .dialogue = &anna_dialogue },
-    .{ .name = "Stephanos", .x = 980, .y = 780, .dialogue = &stephanos_dialogue },
-    .{ .name = "Markos", .x = 450, .y = 540, .dialogue = &markos_dialogue },
-    .{ .name = "Helena", .x = 1100, .y = 310, .dialogue = &helena_dialogue },
-    .{ .name = "Diodoros", .x = 1600, .y = 1200, .dialogue = &diodoros_dialogue },
+    .{ .name = "Father Theophilos", .x = 1050, .y = 700, .dialogue = &theophilos_dialogue, .requires = .none },
+    .{ .name = "Anna", .x = 1150, .y = 850, .dialogue = &anna_dialogue, .requires = .spoke_to_theophilos },
+    .{ .name = "Stephanos", .x = 980, .y = 780, .dialogue = &stephanos_dialogue, .requires = .spoke_to_theophilos },
+    .{ .name = "Markos", .x = 450, .y = 540, .dialogue = &markos_dialogue, .requires = .spoke_to_anna },
+    .{ .name = "Helena", .x = 1100, .y = 310, .dialogue = &helena_dialogue, .requires = .spoke_to_anna },
+    .{ .name = "Diodoros", .x = 1600, .y = 1200, .dialogue = &diodoros_dialogue, .requires = .spoke_to_anna },
 };
 
 // --- Tests ---
@@ -225,13 +240,39 @@ test "npc interaction radius" {
     try expect(!npc.canInteract(300, 300));
 }
 
-test "find closest interactable npc" {
-    const idx = findInteractable(&district_npcs, 1050, 700);
-    try expect(idx != null);
-    try std.testing.expectEqualStrings("Father Theophilos", district_npcs[idx.?].name);
+test "npc not visible without required flag" {
+    const flags = Flags{};
+    const npc = Npc{ .name = "Anna", .x = 100, .y = 100, .dialogue = &anna_dialogue, .requires = .spoke_to_theophilos };
+    try expect(!npc.isVisible(&flags));
 }
 
-test "no interactable when too far" {
-    const idx = findInteractable(&district_npcs, 0, 0);
-    try expect(idx == null);
+test "npc visible after flag granted" {
+    var flags = Flags{};
+    flags.grant(.spoke_to_theophilos);
+    const npc = Npc{ .name = "Anna", .x = 100, .y = 100, .dialogue = &anna_dialogue, .requires = .spoke_to_theophilos };
+    try expect(npc.isVisible(&flags));
+}
+
+test "npc with no requirement always visible" {
+    const flags = Flags{};
+    const npc = Npc{ .name = "Test", .x = 100, .y = 100, .dialogue = &theophilos_dialogue, .requires = .none };
+    try expect(npc.isVisible(&flags));
+}
+
+test "find interactable skips hidden npcs" {
+    var flags = Flags{};
+    // Only Theophilos should be findable at start
+    const idx = findInteractable(&district_npcs, 1050, 700, &flags);
+    try expect(idx != null);
+    try std.testing.expectEqualStrings("Father Theophilos", district_npcs[idx.?].name);
+
+    // Anna is nearby but hidden
+    const anna_idx = findInteractable(&district_npcs, 1150, 850, &flags);
+    try expect(anna_idx == null);
+
+    // After speaking to Theophilos, Anna appears
+    flags.grant(.spoke_to_theophilos);
+    const anna_idx2 = findInteractable(&district_npcs, 1150, 850, &flags);
+    try expect(anna_idx2 != null);
+    try std.testing.expectEqualStrings("Anna", district_npcs[anna_idx2.?].name);
 }
