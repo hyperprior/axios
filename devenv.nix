@@ -37,6 +37,10 @@
     exec = "rm -rf zig-out .zig-cache";
   };
 
+  tasks."axios:site" = {
+    exec = "python3 -m http.server 8080 -d site";
+  };
+
   enterShell = ''
     echo "Axios — Zig $(zig version) + raylib"
     echo ""
@@ -46,6 +50,7 @@
     echo "  devenv tasks run axios:test     - Run tests"
     echo "  devenv tasks run axios:release  - Build optimized release"
     echo "  devenv tasks run axios:clean    - Remove build artifacts"
+    echo "  devenv tasks run axios:site     - Preview website at localhost:8080"
     echo ""
     echo "Steam: zig build -Dsteam=true (requires SDK in vendor/steamworks/sdk/)"
   '';
