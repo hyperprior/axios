@@ -123,7 +123,7 @@ pub const theophilos_after_anna = Dialogue{
 
 pub const theophilos_return = Dialogue{
     .id = "theophilos_return",
-    .grants = .none,
+    .grants = .first_instruction_done,
     .nodes = &.{
         .{
             .speaker = "Father Theophilos",
@@ -135,13 +135,50 @@ pub const theophilos_return = Dialogue{
         },
         .{
             .speaker = "Father Theophilos",
-            .text = "Yes. The poor are often invisible to those who are busy. You have seen well. Anna will guide you further.",
+            .text = "Yes. The poor are often invisible to those who are busy. You have seen well. Now go -- help Helena. That is where your service begins.",
             .effect = .{ .advance_quest = .first_instruction, .quest_stage = .fi_complete },
         },
         .{
             .speaker = "Father Theophilos",
-            .text = "True. But a catechumen must learn to see beneath the surface. Speak with Anna about Helena's need.",
+            .text = "True. But a catechumen must learn to see beneath the surface. Go to Helena, see her need directly. That is where faith becomes action.",
             .effect = .{ .advance_quest = .first_instruction, .quest_stage = .fi_complete },
+        },
+    },
+};
+
+pub const theophilos_during_oil = Dialogue{
+    .id = "theophilos_during_oil",
+    .nodes = &.{
+        .{
+            .speaker = "Father Theophilos",
+            .text = "You are learning the life of this quarter. Keep going. The truth is worth pursuing, even when it is uncomfortable.",
+        },
+    },
+};
+
+pub const theophilos_oil_resolved = Dialogue{
+    .id = "theophilos_oil_resolved",
+    .nodes = &.{
+        .{
+            .speaker = "Father Theophilos",
+            .text = "I have heard what you did for Helena. Tell me -- what did you learn?",
+            .choices = &.{
+                .{ .text = "That mercy requires courage, not just sympathy.", .next_node = 1, .effect = .{ .virtue = .courage, .virtue_amount = 2 } },
+                .{ .text = "That the poor are easy to forget.", .next_node = 2, .effect = .{ .virtue = .mercy, .virtue_amount = 2 } },
+                .{ .text = "That truth is more complicated than I expected.", .next_node = 3, .effect = .{ .virtue = .truth, .virtue_amount = 2 } },
+            },
+        },
+        .{
+            .speaker = "Father Theophilos",
+            .text = "Yes. To speak truth to power is not cruelty -- it is love. You are growing, child. The evening vigil approaches. Let us prepare.",
+        },
+        .{
+            .speaker = "Father Theophilos",
+            .text = "And yet God does not forget them. You remembered Helena when others did not. That is the beginning of a faithful life.",
+        },
+        .{
+            .speaker = "Father Theophilos",
+            .text = "It always is. The world is not divided neatly into saints and sinners. Markos is not evil -- he is pressured. Discernment is knowing the difference.",
         },
     },
 };
@@ -192,6 +229,21 @@ pub const anna_waiting = Dialogue{
         .{
             .speaker = "Anna",
             .text = "Have you visited Helena yet? Her house is north in the residential lane. And do not forget Stephanos -- he is usually near the church.",
+        },
+    },
+};
+
+pub const anna_oil_resolved = Dialogue{
+    .id = "anna_oil_resolved",
+    .nodes = &.{
+        .{
+            .speaker = "Anna",
+            .text = "Helena told me what happened. Thank you. It is not always easy to do right in a world of compromises.",
+            .next_node = 1,
+        },
+        .{
+            .speaker = "Anna",
+            .text = "Speak with Father Theophilos. He will want to hear what you have learned. The evening vigil is approaching.",
         },
     },
 };
@@ -289,6 +341,74 @@ pub const markos_intro = Dialogue{
     },
 };
 
+pub const markos_resolution = Dialogue{
+    .id = "markos_resolution",
+    .nodes = &.{
+        .{
+            .speaker = "Markos",
+            .text = "You again. I can see it in your face -- Diodoros told you.",
+            .choices = &.{
+                .{ .text = "You sold Helena's oil to someone else. A widow's oil.", .next_node = 1, .effect = .{ .virtue = .courage, .virtue_amount = 3 } },
+                .{ .text = "Markos, I know what happened. But I am not here to condemn you.", .next_node = 2, .effect = .{ .virtue = .mercy, .virtue_amount = 3 } },
+                .{ .text = "I will cover the cost myself. Just send the oil to Helena.", .next_node = 3, .effect = .{ .virtue = .faithfulness, .virtue_amount = 3 } },
+            },
+        },
+        .{
+            // Confrontation path
+            .speaker = "Markos",
+            .text = "... You are right. I knew it was wrong. I told myself it was business, but... a widow. Her daughter. I will send the oil tonight. And I will speak to Father Theophilos myself.",
+            .effect = .{ .grant_flag = .oil_confronted_markos, .advance_quest = .widows_oil, .quest_stage = .wo_complete },
+        },
+        .{
+            // Appeal path
+            .speaker = "Markos",
+            .text = "You... are kinder than I deserve. I let the money make the decision for me. I will send the oil. And perhaps... I will come to the vigil tonight.",
+            .effect = .{ .grant_flag = .oil_appealed_markos, .advance_quest = .widows_oil, .quest_stage = .wo_complete },
+        },
+        .{
+            // Cover the gap path
+            .speaker = "Markos",
+            .text = "No -- no. I will not let you pay for my failure. Keep your money. I will send the oil myself. You shame me with your generosity, catechumen.",
+            .effect = .{ .grant_flag = .oil_covered_gap, .advance_quest = .widows_oil, .quest_stage = .wo_complete },
+        },
+    },
+};
+
+pub const markos_after = Dialogue{
+    .id = "markos_after",
+    .nodes = &.{
+        .{
+            .speaker = "Markos",
+            .text = "The oil has been sent. I... thank you. It was easier to look away than I realized.",
+        },
+    },
+};
+
+// --- Helena outcome ---
+
+pub const helena_resolved = Dialogue{
+    .id = "helena_resolved",
+    .grants = .oil_resolved,
+    .nodes = &.{
+        .{
+            .speaker = "Helena",
+            .text = "The oil came! My daughter laughed when I lit the lamp. Thank you -- thank the church. I had almost stopped hoping.",
+            .choices = &.{
+                .{ .text = "God provides, through His people.", .next_node = 1, .effect = .{ .virtue = .faithfulness, .virtue_amount = 2 } },
+                .{ .text = "You should never have had to wait so long.", .next_node = 2, .effect = .{ .virtue = .truth, .virtue_amount = 2 } },
+            },
+        },
+        .{
+            .speaker = "Helena",
+            .text = "He does. And today He sent you. Will you come to the vigil tonight? I would like my daughter to meet the one who helped us.",
+        },
+        .{
+            .speaker = "Helena",
+            .text = "Perhaps. But it came. That is what matters tonight. Will you be at the vigil? I want to light a candle for you.",
+        },
+    },
+};
+
 // --- Diodoros ---
 
 pub const diodoros_intro = Dialogue{
@@ -340,6 +460,8 @@ pub const district_npcs = [_]Npc{
             .{ .dialogue = &theophilos_intro },
             .{ .dialogue = &theophilos_after_anna, .requires_flag = .spoke_to_anna },
             .{ .dialogue = &theophilos_return, .requires_stage = .fi_return_to_theophilos },
+            .{ .dialogue = &theophilos_during_oil, .requires_flag = .first_instruction_done },
+            .{ .dialogue = &theophilos_oil_resolved, .requires_flag = .oil_resolved },
         },
     },
     .{
@@ -350,6 +472,7 @@ pub const district_npcs = [_]Npc{
         .dialogues = &.{
             .{ .dialogue = &anna_intro },
             .{ .dialogue = &anna_waiting, .requires_flag = .spoke_to_anna },
+            .{ .dialogue = &anna_oil_resolved, .requires_flag = .oil_resolved },
         },
     },
     .{
@@ -368,6 +491,8 @@ pub const district_npcs = [_]Npc{
         .requires = .spoke_to_anna,
         .dialogues = &.{
             .{ .dialogue = &markos_intro },
+            .{ .dialogue = &markos_resolution, .requires_stage = .wo_decide_resolution },
+            .{ .dialogue = &markos_after, .requires_stage = .wo_complete },
         },
     },
     .{
@@ -377,6 +502,7 @@ pub const district_npcs = [_]Npc{
         .requires = .spoke_to_anna,
         .dialogues = &.{
             .{ .dialogue = &helena_intro },
+            .{ .dialogue = &helena_resolved, .requires_stage = .wo_complete },
         },
     },
     .{

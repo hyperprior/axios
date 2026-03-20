@@ -11,6 +11,14 @@ pub const Flag = enum(u8) {
     spoke_to_stephanos,
     spoke_to_diodoros,
     knows_about_oil,
+    // Widow's Oil resolution paths
+    oil_confronted_markos,
+    oil_appealed_markos,
+    oil_covered_gap,
+    oil_resolved,
+    // Quest completion
+    first_instruction_done,
+    widows_oil_done,
     _,
 };
 

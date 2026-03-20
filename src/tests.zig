@@ -8,4 +8,5 @@ test {
     _ = @import("flags.zig");
     _ = @import("quest.zig");
     _ = @import("formation.zig");
+    _ = @import("test_quest_flow.zig");
 }
