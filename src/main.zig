@@ -51,8 +51,12 @@ fn update(dt: f32) void {
             if (c.IsKeyPressed(c.KEY_ESCAPE)) {
                 gs.pause();
             }
-            if (c.IsKeyPressed(c.KEY_S) and (c.IsKeyDown(c.KEY_LEFT_SHIFT) or c.IsKeyDown(c.KEY_RIGHT_SHIFT))) {
-                save_mod.save(&gs) catch {};
+            if ((c.IsKeyDown(c.KEY_LEFT_SHIFT) or c.IsKeyDown(c.KEY_RIGHT_SHIFT)) and c.IsKeyPressed(c.KEY_S)) {
+                if (save_mod.save(&gs)) {
+                    std.log.info("Game saved", .{});
+                } else |err| {
+                    std.log.err("Save failed: {}", .{err});
+                }
             }
         },
         .paused => {
@@ -67,9 +71,10 @@ fn update(dt: f32) void {
 }
 
 fn readInput() Input {
+    const shift_held = c.IsKeyDown(c.KEY_LEFT_SHIFT) or c.IsKeyDown(c.KEY_RIGHT_SHIFT);
     return .{
         .up = c.IsKeyDown(c.KEY_W) or c.IsKeyDown(c.KEY_UP),
-        .down = c.IsKeyDown(c.KEY_S) or c.IsKeyDown(c.KEY_DOWN),
+        .down = (!shift_held and c.IsKeyDown(c.KEY_S)) or c.IsKeyDown(c.KEY_DOWN),
         .left = c.IsKeyDown(c.KEY_A) or c.IsKeyDown(c.KEY_LEFT),
         .right = c.IsKeyDown(c.KEY_D) or c.IsKeyDown(c.KEY_RIGHT),
     };
