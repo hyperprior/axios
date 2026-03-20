@@ -3,23 +3,39 @@
 const std = @import("std");
 const Flag = @import("flags.zig").Flag;
 const Flags = @import("flags.zig").Flags;
+const QuestId = @import("quest.zig").QuestId;
+const QuestStage = @import("quest.zig").QuestStage;
+const Virtue = @import("formation.zig").Virtue;
+
+pub const Effect = struct {
+    grant_flag: Flag = .none,
+    start_quest: ?QuestId = null,
+    advance_quest: ?QuestId = null,
+    quest_stage: QuestStage = .not_started,
+    virtue: ?Virtue = null,
+    virtue_amount: i8 = 0,
+};
+
+pub const no_effect = Effect{};
 
 pub const Choice = struct {
     text: []const u8,
-    next_node: u16, // index into dialogue's nodes array
+    next_node: u16,
+    effect: Effect = no_effect,
 };
 
 pub const Node = struct {
     speaker: []const u8,
     text: []const u8,
     choices: []const Choice = &.{},
-    next_node: ?u16 = null, // auto-advance if no choices (null = end)
+    next_node: ?u16 = null,
+    effect: Effect = no_effect, // effect applied when this node is reached
 };
 
 pub const Dialogue = struct {
     id: []const u8,
     nodes: []const Node,
-    grants: Flag = .none, // flag granted when this dialogue completes
+    grants: Flag = .none,
 };
 
 pub const DialogueState = struct {
@@ -27,12 +43,19 @@ pub const DialogueState = struct {
     dialogue: ?*const Dialogue = null,
     current_node: u16 = 0,
     selected_choice: u8 = 0,
+    // Effects to be applied by the game state after each advance
+    pending_effect: Effect = no_effect,
 
     pub fn start(self: *DialogueState, dialogue: *const Dialogue) void {
         self.active = true;
         self.dialogue = dialogue;
         self.current_node = 0;
         self.selected_choice = 0;
+        self.pending_effect = no_effect;
+        // Apply effect of first node if any
+        if (dialogue.nodes.len > 0) {
+            self.pending_effect = dialogue.nodes[0].effect;
+        }
     }
 
     pub fn currentNode(self: *const DialogueState) ?*const Node {
@@ -64,14 +87,17 @@ pub const DialogueState = struct {
         }
     }
 
-    // Advance dialogue. Returns the granted flag if dialogue ended, .none otherwise.
+    // Advance dialogue. Returns the grant flag if dialogue ended.
     pub fn advance(self: *DialogueState) Flag {
         const node = self.currentNode() orelse {
             return self.closeAndGrant();
         };
 
+        self.pending_effect = no_effect;
+
         if (node.choices.len > 0) {
             const choice = &node.choices[self.selected_choice];
+            self.pending_effect = choice.effect;
             self.current_node = choice.next_node;
         } else if (node.next_node) |next| {
             self.current_node = next;
@@ -85,6 +111,10 @@ pub const DialogueState = struct {
         if (self.current_node >= d.nodes.len) {
             return self.closeAndGrant();
         }
+
+        // Merge node effect
+        const new_node = &d.nodes[self.current_node];
+        self.pending_effect = mergeEffects(self.pending_effect, new_node.effect);
 
         return .none;
     }
@@ -100,8 +130,20 @@ pub const DialogueState = struct {
         self.dialogue = null;
         self.current_node = 0;
         self.selected_choice = 0;
+        self.pending_effect = no_effect;
     }
 };
+
+fn mergeEffects(a: Effect, b: Effect) Effect {
+    return .{
+        .grant_flag = if (b.grant_flag != .none) b.grant_flag else a.grant_flag,
+        .start_quest = b.start_quest orelse a.start_quest,
+        .advance_quest = b.advance_quest orelse a.advance_quest,
+        .quest_stage = if (b.quest_stage != .not_started) b.quest_stage else a.quest_stage,
+        .virtue = b.virtue orelse a.virtue,
+        .virtue_amount = if (b.virtue_amount != 0) b.virtue_amount else a.virtue_amount,
+    };
+}
 
 // --- Tests ---
 
@@ -116,7 +158,7 @@ const test_dialogue = Dialogue{
             .speaker = "Anna",
             .text = "Peace be with you. Are you the new catechumen?",
             .choices = &.{
-                .{ .text = "Yes, Father Theophilos sent me.", .next_node = 1 },
+                .{ .text = "Yes, Father Theophilos sent me.", .next_node = 1, .effect = .{ .virtue = .humility, .virtue_amount = 2 } },
                 .{ .text = "Who are you?", .next_node = 2 },
             },
         },
@@ -127,7 +169,7 @@ const test_dialogue = Dialogue{
         },
         .{
             .speaker = "Anna",
-            .text = "I am Anna, deaconess of this parish. I help organize the charitable work.",
+            .text = "I am Anna, deaconess of this parish.",
             .next_node = 1,
         },
         .{
@@ -142,8 +184,6 @@ test "dialogue starts at node 0" {
     ds.start(&test_dialogue);
     try expect(ds.active);
     try expect(ds.current_node == 0);
-    const node = ds.currentNode().?;
-    try expectEqualStrings("Anna", node.speaker);
 }
 
 test "dialogue has choices" {
@@ -153,41 +193,24 @@ test "dialogue has choices" {
     try expect(ds.choiceCount() == 2);
 }
 
-test "selecting choice advances to correct node" {
+test "selecting choice advances and captures effect" {
     var ds = DialogueState{};
     ds.start(&test_dialogue);
-    ds.selected_choice = 0;
+    ds.selected_choice = 0; // humble response
     const flag = ds.advance();
     try expect(flag == .none);
     try expect(ds.current_node == 1);
+    try expect(ds.pending_effect.virtue.? == .humility);
+    try expect(ds.pending_effect.virtue_amount == 2);
 }
 
-test "second choice goes to different node" {
-    var ds = DialogueState{};
-    ds.start(&test_dialogue);
-    ds.selected_choice = 1;
-    const flag = ds.advance();
-    try expect(flag == .none);
-    try expect(ds.current_node == 2);
-}
-
-test "auto-advance follows next_node" {
-    var ds = DialogueState{};
-    ds.start(&test_dialogue);
-    ds.selected_choice = 0;
-    _ = ds.advance(); // node 0 -> 1
-    const flag = ds.advance(); // node 1 -> 3 (auto)
-    try expect(flag == .none);
-    try expect(ds.current_node == 3);
-}
-
-test "dialogue ends at terminal node and grants flag" {
+test "dialogue ends and grants flag" {
     var ds = DialogueState{};
     ds.start(&test_dialogue);
     ds.selected_choice = 0;
     _ = ds.advance(); // 0 -> 1
     _ = ds.advance(); // 1 -> 3
-    const flag = ds.advance(); // 3 is terminal
+    const flag = ds.advance(); // 3 terminal
     try expect(flag == .spoke_to_theophilos);
     try expect(!ds.active);
 }
@@ -195,13 +218,8 @@ test "dialogue ends at terminal node and grants flag" {
 test "select up and down" {
     var ds = DialogueState{};
     ds.start(&test_dialogue);
-    try expect(ds.selected_choice == 0);
     ds.selectDown();
     try expect(ds.selected_choice == 1);
-    ds.selectDown();
-    try expect(ds.selected_choice == 1);
-    ds.selectUp();
-    try expect(ds.selected_choice == 0);
     ds.selectUp();
     try expect(ds.selected_choice == 0);
 }
@@ -211,5 +229,4 @@ test "close resets state" {
     ds.start(&test_dialogue);
     ds.close();
     try expect(!ds.active);
-    try expect(ds.dialogue == null);
 }

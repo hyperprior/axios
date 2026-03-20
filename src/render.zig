@@ -139,6 +139,14 @@ fn drawGameplay(gs: *const GameState) void {
     c.DrawText("The Portico Quarter", 12, 8, 20, hud_color);
     c.DrawText("WASD: Move  E: Talk  ESC: Pause  F5: Save", screen_width - 430, 10, 16, label_color);
 
+    // Quest objective
+    if (gs.quests.activeObjective()) |obj| {
+        const obj_cstr = @as([*:0]const u8, @ptrCast(obj.ptr));
+        const obj_width = c.MeasureText(obj_cstr, 16);
+        c.DrawRectangle(0, 36, obj_width + 24, 26, hud_bg);
+        c.DrawText(obj_cstr, 12, 40, 16, warm_stone);
+    }
+
     // Dialogue box (drawn last, on top of everything)
     if (gs.dialogue.active) {
         drawDialogue(&gs.dialogue);

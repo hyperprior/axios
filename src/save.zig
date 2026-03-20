@@ -44,6 +44,10 @@ pub fn save(gs: *const GameState) SaveError!void {
 
     // Write flags
     if (c_io.fwrite(&data.flags, @sizeOf(@TypeOf(data.flags)), 1, file) != 1) return error.WriteFailed;
+
+    // Write quest stages and formation (v3+)
+    if (c_io.fwrite(&data.quest_stages, @sizeOf(@TypeOf(data.quest_stages)), 1, file) != 1) return error.WriteFailed;
+    if (c_io.fwrite(&data.formation, @sizeOf(@TypeOf(data.formation)), 1, file) != 1) return error.WriteFailed;
 }
 
 pub fn load() LoadError!GameState {
@@ -66,6 +70,13 @@ pub fn load() LoadError!GameState {
         if (c_io.fread(&flags_data, @sizeOf(@TypeOf(flags_data)), 1, file) != 1) return error.ReadFailed;
     }
 
+    var quest_stages: [3]u8 = [_]u8{0} ** 3;
+    var formation_vals: [5]i8 = [_]i8{0} ** 5;
+    if (header[1] >= 3) {
+        if (c_io.fread(&quest_stages, @sizeOf(@TypeOf(quest_stages)), 1, file) != 1) return error.ReadFailed;
+        if (c_io.fread(&formation_vals, @sizeOf(@TypeOf(formation_vals)), 1, file) != 1) return error.ReadFailed;
+    }
+
     return GameState.fromSaveData(.{
         .version = header[1],
         .player_x = floats[0],
@@ -74,6 +85,8 @@ pub fn load() LoadError!GameState {
         .camera_y = floats[3],
         .player_facing = facing[0],
         .flags = flags_data,
+        .quest_stages = quest_stages,
+        .formation = formation_vals,
     });
 }
 

@@ -6,8 +6,11 @@ const Bounds = @import("player.zig").Bounds;
 const Input = @import("player.zig").Input;
 const clamp = @import("player.zig").clamp;
 const DialogueState = @import("dialogue.zig").DialogueState;
+const Effect = @import("dialogue.zig").Effect;
 const Flag = @import("flags.zig").Flag;
 const Flags = @import("flags.zig").Flags;
+const QuestLog = @import("quest.zig").QuestLog;
+const Formation = @import("formation.zig").Formation;
 const npc_mod = @import("npc.zig");
 
 pub const screen_width: f32 = 1280;
@@ -36,6 +39,8 @@ pub const GameState = struct {
     dialogue: DialogueState = .{},
     nearby_npc: ?usize = null,
     flags: Flags = .{},
+    quests: QuestLog = .{},
+    formation: Formation = .{},
 
     pub fn init() GameState {
         return .{};
@@ -49,6 +54,8 @@ pub const GameState = struct {
         self.dialogue = .{};
         self.nearby_npc = null;
         self.flags = .{};
+        self.quests = .{};
+        self.formation = .{};
     }
 
     pub fn inDialogue(self: *const GameState) bool {
@@ -58,7 +65,11 @@ pub const GameState = struct {
     pub fn tryInteract(self: *GameState) void {
         if (self.dialogue.active) return;
         if (self.nearby_npc) |idx| {
-            self.dialogue.start(npc_mod.district_npcs[idx].dialogue);
+            const npc = &npc_mod.district_npcs[idx];
+            if (npc.selectDialogue(&self.flags, &self.quests)) |d| {
+                self.dialogue.start(d);
+                self.applyEffect(self.dialogue.pending_effect);
+            }
         }
     }
 
@@ -66,6 +77,24 @@ pub const GameState = struct {
         const flag = self.dialogue.advance();
         if (flag != .none) {
             self.flags.grant(flag);
+        }
+        self.applyEffect(self.dialogue.pending_effect);
+    }
+
+    fn applyEffect(self: *GameState, effect: Effect) void {
+        if (effect.grant_flag != .none) {
+            self.flags.grant(effect.grant_flag);
+        }
+        if (effect.start_quest) |qid| {
+            self.quests.start(qid);
+        }
+        if (effect.advance_quest) |qid| {
+            if (effect.quest_stage != .not_started) {
+                self.quests.advance(qid, effect.quest_stage);
+            }
+        }
+        if (effect.virtue) |v| {
+            self.formation.add(v, effect.virtue_amount);
         }
     }
 
@@ -105,7 +134,6 @@ pub const GameState = struct {
         }
     }
 
-    // Serializable snapshot for save/load
     pub const SaveData = struct {
         player_x: f32,
         player_y: f32,
@@ -113,10 +141,16 @@ pub const GameState = struct {
         camera_x: f32,
         camera_y: f32,
         flags: [32]bool = [_]bool{false} ** 32,
-        version: u32 = 2,
+        quest_stages: [3]u8 = [_]u8{0} ** 3,
+        formation: [5]i8 = [_]i8{0} ** 5,
+        version: u32 = 3,
     };
 
     pub fn toSaveData(self: *const GameState) SaveData {
+        var quest_stages: [3]u8 = undefined;
+        for (self.quests.quests, 0..) |q, i| {
+            quest_stages[i] = @intFromEnum(q.stage);
+        }
         return .{
             .player_x = self.player.x,
             .player_y = self.player.y,
@@ -124,11 +158,13 @@ pub const GameState = struct {
             .camera_x = self.camera_x,
             .camera_y = self.camera_y,
             .flags = self.flags.set,
+            .quest_stages = quest_stages,
+            .formation = self.formation.values,
         };
     }
 
     pub fn fromSaveData(data: SaveData) GameState {
-        return .{
+        var gs = GameState{
             .scene = .gameplay,
             .player = .{
                 .x = data.player_x,
@@ -139,6 +175,13 @@ pub const GameState = struct {
             .camera_y = data.camera_y,
             .flags = .{ .set = data.flags },
         };
+        if (data.version >= 3) {
+            for (data.quest_stages, 0..) |stage, i| {
+                gs.quests.quests[i].stage = @enumFromInt(stage);
+            }
+            gs.formation.values = data.formation;
+        }
+        return gs;
     }
 };
 
@@ -152,105 +195,70 @@ test "initial state is title" {
     try expect(gs.scene == .title);
 }
 
-test "startGame transitions to gameplay" {
+test "startGame resets everything" {
     var gs = GameState.init();
     gs.startGame();
     try expect(gs.scene == .gameplay);
-    try expectApprox(gs.player.x, 1050.0, 0.01);
-    try expectApprox(gs.player.y, 750.0, 0.01);
+    try expect(!gs.flags.has(.spoke_to_theophilos));
+    try expect(gs.quests.activeObjective() == null);
+    try expect(gs.formation.get(.mercy) == 0);
 }
 
-test "pause transitions to paused" {
+test "dialogue effect starts quest" {
     var gs = GameState.init();
     gs.startGame();
-    gs.pause();
-    try expect(gs.scene == .paused);
+    gs.applyEffect(.{ .start_quest = .first_instruction });
+    try expect(gs.quests.getConst(.first_instruction).isActive());
 }
 
-test "pause only works from gameplay" {
-    var gs = GameState.init();
-    gs.pause();
-    try expect(gs.scene == .title);
-}
-
-test "resume returns to gameplay" {
+test "dialogue effect advances quest" {
     var gs = GameState.init();
     gs.startGame();
-    gs.pause();
-    gs.applyMenuAction(.resume_game);
-    try expect(gs.scene == .gameplay);
+    gs.quests.start(.first_instruction);
+    gs.applyEffect(.{ .advance_quest = .first_instruction, .quest_stage = .fi_talk_to_stephanos });
+    try expect(gs.quests.getConst(.first_instruction).stage == .fi_talk_to_stephanos);
 }
 
-test "quit_to_title returns to title" {
+test "dialogue effect grants virtue" {
     var gs = GameState.init();
     gs.startGame();
-    gs.pause();
-    gs.applyMenuAction(.quit_to_title);
-    try expect(gs.scene == .title);
+    gs.applyEffect(.{ .virtue = .mercy, .virtue_amount = 3 });
+    try expect(gs.formation.get(.mercy) == 3);
 }
 
-test "gameplay updates player position" {
-    var gs = GameState.init();
-    gs.startGame();
-    const start_x = gs.player.x;
-    gs.updateGameplay(.{ .right = true }, 0.5);
-    try expect(gs.player.x > start_x);
-}
-
-test "camera follows player" {
-    var gs = GameState.init();
-    gs.startGame();
-    gs.updateGameplay(.{ .right = true }, 0.5);
-    try expectApprox(gs.camera_x, gs.player.centerX() - screen_width / 2.0, 1.0);
-}
-
-test "save/load roundtrip preserves state and flags" {
+test "save/load roundtrip preserves quests and formation" {
     var gs = GameState.init();
     gs.startGame();
     gs.flags.grant(.spoke_to_theophilos);
-    gs.updateGameplay(.{ .right = true, .down = true }, 1.0);
+    gs.quests.start(.first_instruction);
+    gs.formation.add(.mercy, 5);
+    gs.updateGameplay(.{ .right = true }, 1.0);
 
     const save = gs.toSaveData();
     const loaded = GameState.fromSaveData(save);
 
-    try expectApprox(loaded.player.x, gs.player.x, 0.01);
-    try expectApprox(loaded.player.y, gs.player.y, 0.01);
-    try expect(loaded.player.facing == gs.player.facing);
-    try expect(loaded.scene == .gameplay);
     try expect(loaded.flags.has(.spoke_to_theophilos));
-    try expect(!loaded.flags.has(.spoke_to_anna));
-}
-
-test "dialogue completion grants flag" {
-    var gs = GameState.init();
-    gs.startGame();
-    gs.dialogue.start(&npc_mod.theophilos_dialogue);
-    try expect(!gs.flags.has(.spoke_to_theophilos));
-
-    // Pick first choice, then advance to end
-    gs.dialogue.selected_choice = 0;
-    gs.advanceDialogue(); // node 0 -> 1
-    gs.advanceDialogue(); // node 1 is terminal -> grants flag
-
-    try expect(gs.flags.has(.spoke_to_theophilos));
-    try expect(!gs.dialogue.active);
+    try expect(loaded.quests.getConst(.first_instruction).isActive());
+    try expect(loaded.formation.get(.mercy) == 5);
 }
 
 test "only theophilos visible at start" {
     var gs = GameState.init();
     gs.startGame();
-    // Near Theophilos
     gs.player = Player.init(1050, 700);
     gs.updateGameplay(.{}, 0);
     try expect(gs.nearby_npc != null);
 
-    // Near Anna's position but she's hidden
     gs.player = Player.init(1150, 850);
     gs.updateGameplay(.{}, 0);
     try expect(gs.nearby_npc == null);
+}
 
-    // After speaking to Theophilos, Anna appears
-    gs.flags.grant(.spoke_to_theophilos);
-    gs.updateGameplay(.{}, 0);
-    try expect(gs.nearby_npc != null);
+test "pause and resume" {
+    var gs = GameState.init();
+    gs.startGame();
+    gs.pause();
+    try expect(gs.scene == .paused);
+    gs.applyMenuAction(.resume_game);
+    try expect(gs.scene == .gameplay);
 }

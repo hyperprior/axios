@@ -6,4 +6,6 @@ test {
     _ = @import("dialogue.zig");
     _ = @import("npc.zig");
     _ = @import("flags.zig");
+    _ = @import("quest.zig");
+    _ = @import("formation.zig");
 }

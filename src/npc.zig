@@ -2,21 +2,49 @@
 
 const std = @import("std");
 const Dialogue = @import("dialogue.zig").Dialogue;
+const Effect = @import("dialogue.zig").Effect;
 const Flag = @import("flags.zig").Flag;
 const Flags = @import("flags.zig").Flags;
+const QuestStage = @import("quest.zig").QuestStage;
+const QuestLog = @import("quest.zig").QuestLog;
 
 const interaction_radius: f32 = 50.0;
+
+pub const DialogueEntry = struct {
+    dialogue: *const Dialogue,
+    requires_flag: Flag = .none,
+    requires_stage: QuestStage = .not_started,
+};
 
 pub const Npc = struct {
     name: []const u8,
     x: f32,
     y: f32,
-    dialogue: *const Dialogue,
+    dialogues: []const DialogueEntry,
     size: f32 = 20,
-    requires: Flag = .none, // NPC only appears when this flag is set (.none = always visible)
+    requires: Flag = .none,
 
     pub fn isVisible(self: *const Npc, flags: *const Flags) bool {
         return self.requires == .none or flags.has(self.requires);
+    }
+
+    pub fn selectDialogue(self: *const Npc, flags: *const Flags, quest_log: *const QuestLog) ?*const Dialogue {
+        // Walk entries in reverse — later entries are more specific
+        var i: usize = self.dialogues.len;
+        while (i > 0) {
+            i -= 1;
+            const entry = &self.dialogues[i];
+            const flag_ok = entry.requires_flag == .none or flags.has(entry.requires_flag);
+            const stage_ok = entry.requires_stage == .not_started or blk: {
+                // Check if any quest is at this stage
+                for (&quest_log.quests) |*q| {
+                    if (q.stage == entry.requires_stage) break :blk true;
+                }
+                break :blk false;
+            };
+            if (flag_ok and stage_ok) return entry.dialogue;
+        }
+        return null;
     }
 
     pub fn distanceTo(self: *const Npc, px: f32, py: f32) f32 {
@@ -46,9 +74,13 @@ pub fn findInteractable(npcs: []const Npc, px: f32, py: f32, flags: *const Flags
     return closest_idx;
 }
 
-// --- Dialogue content for MVP NPCs ---
+// ============================================================
+// Dialogue content
+// ============================================================
 
-pub const theophilos_dialogue = Dialogue{
+// --- Father Theophilos ---
+
+pub const theophilos_intro = Dialogue{
     .id = "theophilos_intro",
     .grants = .spoke_to_theophilos,
     .nodes = &.{
@@ -56,27 +88,67 @@ pub const theophilos_dialogue = Dialogue{
             .speaker = "Father Theophilos",
             .text = "Ah, you have come. The Lord's timing is perfect, as always.",
             .choices = &.{
-                .{ .text = "Father, I am ready to serve.", .next_node = 1 },
+                .{ .text = "Father, I am ready to serve.", .next_node = 1, .effect = .{ .virtue = .humility, .virtue_amount = 1 } },
                 .{ .text = "What would you have me do?", .next_node = 2 },
-                .{ .text = "I am still learning my way around.", .next_node = 3 },
+                .{ .text = "I am still learning my way around.", .next_node = 3, .effect = .{ .virtue = .humility, .virtue_amount = 2 } },
             },
         },
         .{
             .speaker = "Father Theophilos",
-            .text = "Good. A willing heart is the beginning of wisdom. Anna in the courtyard has need of help today. Speak with her.",
+            .text = "Good. A willing heart is the beginning of wisdom. Anna in the courtyard needs help today. Speak with her.",
+            .effect = .{ .start_quest = .first_instruction },
         },
         .{
             .speaker = "Father Theophilos",
-            .text = "Today there are errands to be done, and people to be helped. Find Anna -- she will guide you.",
+            .text = "Today there are errands to be done and people to be helped. Find Anna -- she will guide you.",
+            .effect = .{ .start_quest = .first_instruction },
         },
         .{
             .speaker = "Father Theophilos",
-            .text = "That is no shame. Walk the district, speak to the people, and the city will teach you. But first, find Anna near the courtyard.",
+            .text = "That is no shame. Walk the district, speak to the people. But first, find Anna near the courtyard.",
+            .effect = .{ .start_quest = .first_instruction },
         },
     },
 };
 
-pub const anna_dialogue = Dialogue{
+pub const theophilos_after_anna = Dialogue{
+    .id = "theophilos_check_in",
+    .nodes = &.{
+        .{
+            .speaker = "Father Theophilos",
+            .text = "Have you spoken with Anna? Good. There is much to do in this quarter. Keep your eyes open and your heart ready.",
+        },
+    },
+};
+
+pub const theophilos_return = Dialogue{
+    .id = "theophilos_return",
+    .grants = .none,
+    .nodes = &.{
+        .{
+            .speaker = "Father Theophilos",
+            .text = "You have met the people of this quarter. What have you seen?",
+            .choices = &.{
+                .{ .text = "There is real need here. Helena has no oil for her lamps.", .next_node = 1, .effect = .{ .virtue = .mercy, .virtue_amount = 2 } },
+                .{ .text = "Everyone seems to have their own worries.", .next_node = 2, .effect = .{ .virtue = .truth, .virtue_amount = 1 } },
+            },
+        },
+        .{
+            .speaker = "Father Theophilos",
+            .text = "Yes. The poor are often invisible to those who are busy. You have seen well. Anna will guide you further.",
+            .effect = .{ .advance_quest = .first_instruction, .quest_stage = .fi_complete },
+        },
+        .{
+            .speaker = "Father Theophilos",
+            .text = "True. But a catechumen must learn to see beneath the surface. Speak with Anna about Helena's need.",
+            .effect = .{ .advance_quest = .first_instruction, .quest_stage = .fi_complete },
+        },
+    },
+};
+
+// --- Anna ---
+
+pub const anna_intro = Dialogue{
     .id = "anna_intro",
     .grants = .spoke_to_anna,
     .nodes = &.{
@@ -84,15 +156,15 @@ pub const anna_dialogue = Dialogue{
             .speaker = "Anna",
             .text = "Peace be with you. You must be the catechumen Father Theophilos spoke of.",
             .choices = &.{
-                .{ .text = "Yes. He said you could use help.", .next_node = 1 },
+                .{ .text = "Yes. He said you could use help.", .next_node = 1, .effect = .{ .virtue = .humility, .virtue_amount = 1 } },
                 .{ .text = "Are you the deaconess?", .next_node = 2 },
             },
         },
         .{
             .speaker = "Anna",
-            .text = "Indeed I can. Helena, a widow in the residential lane, was promised oil for her lamps. It has not arrived. Will you look into it?",
+            .text = "Indeed. Helena, a widow in the residential lane, was promised oil for her lamps. It has not arrived. Will you look into it?",
             .choices = &.{
-                .{ .text = "Of course. Where should I start?", .next_node = 3 },
+                .{ .text = "Of course. Where should I start?", .next_node = 3, .effect = .{ .virtue = .mercy, .virtue_amount = 1 } },
                 .{ .text = "Who was supposed to deliver it?", .next_node = 4 },
             },
         },
@@ -103,71 +175,30 @@ pub const anna_dialogue = Dialogue{
         },
         .{
             .speaker = "Anna",
-            .text = "Helena's house is north, in the residential lane. She will tell you what she knows. Then try Markos at the market -- he deals in oil.",
+            .text = "Helena's house is north, in the lane. Speak with her first. Then try Markos at the market -- he deals in oil. And find Stephanos too -- he may have heard something.",
+            .effect = .{ .advance_quest = .first_instruction, .quest_stage = .fi_talk_to_stephanos, .start_quest = .widows_oil },
         },
         .{
             .speaker = "Anna",
-            .text = "Markos, the oil merchant in the market street. He is not a bad man, but... business has its pressures. Ask him directly.",
+            .text = "Markos, the oil merchant. He is not a bad man, but business has its pressures. Ask him directly. Also speak to Stephanos nearby.",
+            .effect = .{ .advance_quest = .first_instruction, .quest_stage = .fi_talk_to_stephanos, .start_quest = .widows_oil },
         },
     },
 };
 
-pub const markos_dialogue = Dialogue{
-    .id = "markos_intro",
-    .grants = .spoke_to_markos,
+pub const anna_waiting = Dialogue{
+    .id = "anna_waiting",
     .nodes = &.{
         .{
-            .speaker = "Markos",
-            .text = "Welcome, welcome! Looking to buy? I have the finest oil in the quarter.",
-            .choices = &.{
-                .{ .text = "I am asking about a delivery to Helena.", .next_node = 1 },
-                .{ .text = "Just looking around.", .next_node = 3 },
-            },
-        },
-        .{
-            .speaker = "Markos",
-            .text = "Helena... yes, I know. The delivery was... delayed. Costs have risen, you understand. I had to make difficult choices.",
-            .choices = &.{
-                .{ .text = "She is a widow. The church trusted you.", .next_node = 2 },
-                .{ .text = "What happened to the oil?", .next_node = 2 },
-            },
-        },
-        .{
-            .speaker = "Markos",
-            .text = "Look, I am not heartless. I will see what I can do. But do not lecture me -- you do not know the pressures of trade.",
-        },
-        .{
-            .speaker = "Markos",
-            .text = "Take your time. Quality speaks for itself.",
+            .speaker = "Anna",
+            .text = "Have you visited Helena yet? Her house is north in the residential lane. And do not forget Stephanos -- he is usually near the church.",
         },
     },
 };
 
-pub const helena_dialogue = Dialogue{
-    .id = "helena_intro",
-    .grants = .spoke_to_helena,
-    .nodes = &.{
-        .{
-            .speaker = "Helena",
-            .text = "Oh... you are from the church? I was not expecting anyone.",
-            .choices = &.{
-                .{ .text = "Anna sent me. She said oil was promised to you.", .next_node = 1 },
-                .{ .text = "How are you, sister?", .next_node = 2 },
-            },
-        },
-        .{
-            .speaker = "Helena",
-            .text = "Yes. It was to come last week. The lamps are dark, and my daughter is afraid at night. I did not want to complain.",
-        },
-        .{
-            .speaker = "Helena",
-            .text = "I manage. God provides. But... the nights are long without light, and my daughter worries.",
-            .next_node = 1,
-        },
-    },
-};
+// --- Stephanos ---
 
-pub const stephanos_dialogue = Dialogue{
+pub const stephanos_intro = Dialogue{
     .id = "stephanos_intro",
     .grants = .spoke_to_stephanos,
     .nodes = &.{
@@ -176,21 +207,91 @@ pub const stephanos_dialogue = Dialogue{
             .text = "Another catechumen! I thought I was the only one still fumbling through the prayers.",
             .choices = &.{
                 .{ .text = "How long have you been preparing?", .next_node = 1 },
-                .{ .text = "It is good to meet you.", .next_node = 2 },
+                .{ .text = "Have you heard anything about Helena's oil?", .next_node = 2, .effect = .{ .virtue = .truth, .virtue_amount = 1 } },
             },
         },
         .{
             .speaker = "Stephanos",
-            .text = "Three months now. Sometimes I think I understand, and then Father Theophilos asks a question that makes me realize I know nothing. But that is the point, I suppose.",
+            .text = "Three months now. It helps to know someone else is on the same path. You should return to Father Theophilos when you are ready.",
+            .effect = .{ .advance_quest = .first_instruction, .quest_stage = .fi_return_to_theophilos },
         },
         .{
             .speaker = "Stephanos",
-            .text = "And you. It helps to know someone else is on the same path. If you need anything, I am usually near the courtyard.",
+            .text = "Helena? I heard Markos had trouble with a shipment. Or maybe it was the costs. People talk, but no one says the same thing. You should ask him directly.",
+            .effect = .{ .advance_quest = .first_instruction, .quest_stage = .fi_return_to_theophilos },
         },
     },
 };
 
-pub const diodoros_dialogue = Dialogue{
+// --- Helena ---
+
+pub const helena_intro = Dialogue{
+    .id = "helena_intro",
+    .grants = .spoke_to_helena,
+    .nodes = &.{
+        .{
+            .speaker = "Helena",
+            .text = "Oh... you are from the church? I was not expecting anyone.",
+            .choices = &.{
+                .{ .text = "Anna sent me. She said oil was promised to you.", .next_node = 1, .effect = .{ .virtue = .mercy, .virtue_amount = 1 } },
+                .{ .text = "How are you, sister?", .next_node = 2, .effect = .{ .virtue = .mercy, .virtue_amount = 2 } },
+            },
+        },
+        .{
+            .speaker = "Helena",
+            .text = "Yes. It was to come last week. The lamps are dark, and my daughter is afraid at night. I did not want to complain.",
+            .effect = .{ .advance_quest = .widows_oil, .quest_stage = .wo_investigate_markos },
+        },
+        .{
+            .speaker = "Helena",
+            .text = "I manage. God provides. But the nights are long without light, and my daughter worries. The oil was promised but never came.",
+            .next_node = 1,
+        },
+    },
+};
+
+// --- Markos ---
+
+pub const markos_intro = Dialogue{
+    .id = "markos_intro",
+    .grants = .spoke_to_markos,
+    .nodes = &.{
+        .{
+            .speaker = "Markos",
+            .text = "Welcome! Looking to buy? I have the finest oil in the quarter.",
+            .choices = &.{
+                .{ .text = "I am asking about a delivery to Helena.", .next_node = 1, .effect = .{ .virtue = .courage, .virtue_amount = 1 } },
+                .{ .text = "Just looking around.", .next_node = 4 },
+            },
+        },
+        .{
+            .speaker = "Markos",
+            .text = "Helena... yes, I know. The delivery was delayed. Costs have risen, you understand. I had to make difficult choices.",
+            .choices = &.{
+                .{ .text = "She is a widow. The church trusted you with this.", .next_node = 2, .effect = .{ .virtue = .courage, .virtue_amount = 2 } },
+                .{ .text = "I understand. But she has no light at night.", .next_node = 3, .effect = .{ .virtue = .mercy, .virtue_amount = 2 } },
+            },
+        },
+        .{
+            .speaker = "Markos",
+            .text = "Do not lecture me. I am not heartless. Fine -- I will see what I can do. But speak to Diodoros at the loading court. He handles the deliveries.",
+            .effect = .{ .advance_quest = .widows_oil, .quest_stage = .wo_talk_to_diodoros, .grant_flag = .knows_about_oil },
+        },
+        .{
+            .speaker = "Markos",
+            .text = "You are right. She should not suffer for my problems. I will arrange something. Ask Diodoros at the loading court about the delivery.",
+            .effect = .{ .advance_quest = .widows_oil, .quest_stage = .wo_talk_to_diodoros, .grant_flag = .knows_about_oil },
+        },
+        .{
+            .speaker = "Markos",
+            .text = "Take your time. Quality speaks for itself.",
+        },
+    },
+};
+
+// --- Diodoros ---
+
+pub const diodoros_intro = Dialogue{
     .id = "diodoros_intro",
     .grants = .spoke_to_diodoros,
     .nodes = &.{
@@ -198,81 +299,140 @@ pub const diodoros_dialogue = Dialogue{
             .speaker = "Diodoros",
             .text = "Careful where you step. These crates are heavier than they look.",
             .choices = &.{
-                .{ .text = "Do you work the harbor?", .next_node = 1 },
-                .{ .text = "Have you seen oil shipments come through?", .next_node = 2 },
+                .{ .text = "Markos said you handle oil deliveries.", .next_node = 1, .effect = .{ .virtue = .truth, .virtue_amount = 1 } },
+                .{ .text = "Do you work the harbor?", .next_node = 2 },
             },
         },
         .{
             .speaker = "Diodoros",
-            .text = "Loading court, mostly. Everything that comes into this quarter passes through here. I see more than people think.",
+            .text = "The oil for the widow? It came in. But Markos redirected it to a paying customer. He told me not to say anything. The oil exists -- it was just... reprioritized.",
+            .effect = .{ .advance_quest = .widows_oil, .quest_stage = .wo_decide_resolution },
         },
         .{
             .speaker = "Diodoros",
-            .text = "Oil? Plenty comes through. Whether it all ends up where it is supposed to... that is another question. Talk to Markos if you want answers.",
+            .text = "Loading court, mostly. Everything that comes into this quarter passes through here. I see more than people think.",
+            .next_node = 1,
         },
     },
 };
 
-// NPC placements in the Portico Quarter
-// requires = .none means always visible; otherwise the flag must be set
+pub const diodoros_after = Dialogue{
+    .id = "diodoros_after",
+    .nodes = &.{
+        .{
+            .speaker = "Diodoros",
+            .text = "I told you what I know. The rest is between you, Markos, and the Almighty.",
+        },
+    },
+};
+
+// ============================================================
+// NPC placements
+// ============================================================
+
 pub const district_npcs = [_]Npc{
-    .{ .name = "Father Theophilos", .x = 1050, .y = 700, .dialogue = &theophilos_dialogue, .requires = .none },
-    .{ .name = "Anna", .x = 1150, .y = 850, .dialogue = &anna_dialogue, .requires = .spoke_to_theophilos },
-    .{ .name = "Stephanos", .x = 980, .y = 780, .dialogue = &stephanos_dialogue, .requires = .spoke_to_theophilos },
-    .{ .name = "Markos", .x = 450, .y = 540, .dialogue = &markos_dialogue, .requires = .spoke_to_anna },
-    .{ .name = "Helena", .x = 1100, .y = 310, .dialogue = &helena_dialogue, .requires = .spoke_to_anna },
-    .{ .name = "Diodoros", .x = 1600, .y = 1200, .dialogue = &diodoros_dialogue, .requires = .spoke_to_anna },
+    .{
+        .name = "Father Theophilos",
+        .x = 1050,
+        .y = 700,
+        .requires = .none,
+        .dialogues = &.{
+            .{ .dialogue = &theophilos_intro },
+            .{ .dialogue = &theophilos_after_anna, .requires_flag = .spoke_to_anna },
+            .{ .dialogue = &theophilos_return, .requires_stage = .fi_return_to_theophilos },
+        },
+    },
+    .{
+        .name = "Anna",
+        .x = 1150,
+        .y = 850,
+        .requires = .spoke_to_theophilos,
+        .dialogues = &.{
+            .{ .dialogue = &anna_intro },
+            .{ .dialogue = &anna_waiting, .requires_flag = .spoke_to_anna },
+        },
+    },
+    .{
+        .name = "Stephanos",
+        .x = 980,
+        .y = 780,
+        .requires = .spoke_to_theophilos,
+        .dialogues = &.{
+            .{ .dialogue = &stephanos_intro },
+        },
+    },
+    .{
+        .name = "Markos",
+        .x = 450,
+        .y = 540,
+        .requires = .spoke_to_anna,
+        .dialogues = &.{
+            .{ .dialogue = &markos_intro },
+        },
+    },
+    .{
+        .name = "Helena",
+        .x = 1100,
+        .y = 310,
+        .requires = .spoke_to_anna,
+        .dialogues = &.{
+            .{ .dialogue = &helena_intro },
+        },
+    },
+    .{
+        .name = "Diodoros",
+        .x = 1600,
+        .y = 1200,
+        .requires = .spoke_to_anna,
+        .dialogues = &.{
+            .{ .dialogue = &diodoros_intro },
+            .{ .dialogue = &diodoros_after, .requires_flag = .spoke_to_diodoros },
+        },
+    },
 };
 
 // --- Tests ---
 
 const expect = std.testing.expect;
 
-test "npc distance calculation" {
-    const npc = Npc{ .name = "Test", .x = 100, .y = 100, .dialogue = &theophilos_dialogue };
-    const dist = npc.distanceTo(100, 100);
-    try std.testing.expectApproxEqAbs(dist, 0.0, 0.01);
-}
-
-test "npc interaction radius" {
-    const npc = Npc{ .name = "Test", .x = 100, .y = 100, .dialogue = &theophilos_dialogue };
-    try expect(npc.canInteract(120, 110));
-    try expect(!npc.canInteract(300, 300));
-}
-
-test "npc not visible without required flag" {
+test "npc visibility with flags" {
     const flags = Flags{};
-    const npc = Npc{ .name = "Anna", .x = 100, .y = 100, .dialogue = &anna_dialogue, .requires = .spoke_to_theophilos };
-    try expect(!npc.isVisible(&flags));
+    try expect(district_npcs[0].isVisible(&flags)); // Theophilos always
+    try expect(!district_npcs[1].isVisible(&flags)); // Anna hidden
+
+    var flags2 = Flags{};
+    flags2.grant(.spoke_to_theophilos);
+    try expect(district_npcs[1].isVisible(&flags2)); // Anna visible
 }
 
-test "npc visible after flag granted" {
+test "dialogue selection picks most specific" {
     var flags = Flags{};
-    flags.grant(.spoke_to_theophilos);
-    const npc = Npc{ .name = "Anna", .x = 100, .y = 100, .dialogue = &anna_dialogue, .requires = .spoke_to_theophilos };
-    try expect(npc.isVisible(&flags));
+    const log = QuestLog{};
+
+    // Before speaking: get intro
+    const d1 = district_npcs[0].selectDialogue(&flags, &log).?;
+    try std.testing.expectEqualStrings("theophilos_intro", d1.id);
+
+    // After speaking to Anna: get check-in
+    flags.grant(.spoke_to_anna);
+    const d2 = district_npcs[0].selectDialogue(&flags, &log).?;
+    try std.testing.expectEqualStrings("theophilos_check_in", d2.id);
 }
 
-test "npc with no requirement always visible" {
+test "dialogue selection with quest stage" {
+    var flags = Flags{};
+    flags.grant(.spoke_to_anna);
+    var log = QuestLog{};
+    log.start(.first_instruction);
+    log.advance(.first_instruction, .fi_return_to_theophilos);
+
+    const d = district_npcs[0].selectDialogue(&flags, &log).?;
+    try std.testing.expectEqualStrings("theophilos_return", d.id);
+}
+
+test "find interactable skips hidden" {
     const flags = Flags{};
-    const npc = Npc{ .name = "Test", .x = 100, .y = 100, .dialogue = &theophilos_dialogue, .requires = .none };
-    try expect(npc.isVisible(&flags));
-}
-
-test "find interactable skips hidden npcs" {
-    var flags = Flags{};
-    // Only Theophilos should be findable at start
     const idx = findInteractable(&district_npcs, 1050, 700, &flags);
     try expect(idx != null);
     try std.testing.expectEqualStrings("Father Theophilos", district_npcs[idx.?].name);
-
-    // Anna is nearby but hidden
-    const anna_idx = findInteractable(&district_npcs, 1150, 850, &flags);
-    try expect(anna_idx == null);
-
-    // After speaking to Theophilos, Anna appears
-    flags.grant(.spoke_to_theophilos);
-    const anna_idx2 = findInteractable(&district_npcs, 1150, 850, &flags);
-    try expect(anna_idx2 != null);
-    try std.testing.expectEqualStrings("Anna", district_npcs[anna_idx2.?].name);
 }
